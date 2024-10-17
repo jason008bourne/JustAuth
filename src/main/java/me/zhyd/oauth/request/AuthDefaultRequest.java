@@ -17,13 +17,9 @@ import me.zhyd.oauth.utils.*;
 import java.util.List;
 
 /**
- * 默认的request处理类
- *
- * @author yadong.zhang (yadong.zhang0415(a)gmail.com)
- * @author yangkai.shen (https://xkcoding.com)
- * @since 1.0.0
  */
 public abstract class AuthDefaultRequest implements AuthRequest {
+    public static final String STATE = "state";
     protected AuthConfig config;
     protected AuthSource source;
     protected AuthStateCache authStateCache;
@@ -61,7 +57,29 @@ public abstract class AuthDefaultRequest implements AuthRequest {
      * @see AuthDefaultRequest#getAccessToken(AuthCallback)
      */
     protected abstract AuthUser getUserInfo(AuthToken authToken);
-
+//    /** TODO backup
+//     * 统一的登录入口。当通过{@link AuthDefaultRequest#authorize(String)}授权成功后，会跳转到调用方的相关回调方法中
+//     * 方法的入参可以使用{@code AuthCallback}，{@code AuthCallback}类中封装好了OAuth2授权回调所需要的参数
+//     *
+//     * @param authCallback 用于接收回调参数的实体
+//     * @return AuthResponse
+//     */
+//    @Override
+//    public AuthResponse login(AuthCallback authCallback) {
+//        try {
+//            checkCode(authCallback);
+//            if (!config.isIgnoreCheckState()) {
+//                AuthChecker.checkState(authCallback.getState(), source, authStateCache);
+//            }
+//
+//            AuthToken authToken = this.getAccessToken(authCallback);
+//            AuthUser user = this.getUserInfo(authToken);
+//            return AuthResponse.builder().code(AuthResponseStatus.SUCCESS.getCode()).data(user).build();
+//        } catch (Exception e) {
+//            Log.error("Failed to login with oauth authorization.", e);
+//            return this.responseError(e);
+//        }
+//    }
     /**
      * 统一的登录入口。当通过{@link AuthDefaultRequest#authorize(String)}授权成功后，会跳转到调用方的相关回调方法中
      * 方法的入参可以使用{@code AuthCallback}，{@code AuthCallback}类中封装好了OAuth2授权回调所需要的参数
@@ -71,19 +89,45 @@ public abstract class AuthDefaultRequest implements AuthRequest {
      */
     @Override
     public AuthResponse login(AuthCallback authCallback) {
+        AuthResponse response = AuthResponse.builder().code(AuthResponseStatus.SUCCESS.getCode()).build();
         try {
+            response.putExt(STATE,checkState(authCallback.getState(),source,authStateCache));
             checkCode(authCallback);
-            if (!config.isIgnoreCheckState()) {
-                AuthChecker.checkState(authCallback.getState(), source, authStateCache);
-            }
-
             AuthToken authToken = this.getAccessToken(authCallback);
             AuthUser user = this.getUserInfo(authToken);
-            return AuthResponse.builder().code(AuthResponseStatus.SUCCESS.getCode()).data(user).build();
+            response.setData(user);
+            return response;
         } catch (Exception e) {
             Log.error("Failed to login with oauth authorization.", e);
-            return this.responseError(e);
+            AuthResponse failResp = this.responseError(e);
+            failResp.setExt(response.getExt());
+            return failResp;
         }
+    }
+    /**
+     * 校验回调传回的{@code state}，为空或者不存在
+     * <p>
+     * {@code state}不存在的情况只有两种：
+     * 1. {@code state}已使用，被正常清除
+     * 2. {@code state}为前端伪造，本身就不存在
+     *
+     * @param state          {@code state}一定不为空
+     * @param source         {@code source}当前授权平台
+     * @param authStateCache {@code authStateCache} state缓存实现
+     */
+    public static String checkState(String state, AuthSource source, AuthStateCache authStateCache) {
+//        // 推特平台不支持回调 code 和 state
+//        if (source == AuthDefaultSource.TWITTER) {
+//            return;
+//        }
+        if (StringUtils.isEmpty(state)) {
+            throw new AuthException(AuthResponseStatus.ILLEGAL_STATUS, source);
+        }
+        String stateCacheValue = authStateCache.get(state);
+        if (StringUtils.isEmpty(stateCacheValue)) {
+            throw new AuthException(AuthResponseStatus.ILLEGAL_STATUS, source);
+        }
+        return stateCacheValue;
     }
 
     protected void checkCode(AuthCallback authCallback) {
@@ -192,22 +236,35 @@ public abstract class AuthDefaultRequest implements AuthRequest {
     protected String revokeUrl(AuthToken authToken) {
         return UrlBuilder.fromBaseUrl(source.revoke()).queryParam("access_token", authToken.getAccessToken()).build();
     }
-
+//    /**  TODO backup
+//     * 获取state，如果为空， 则默认取当前日期的时间戳
+//     *
+//     * @param state 原始的state
+//     * @return 返回不为null的state
+//     */
+//    protected String getRealState(String state) {
+//        if (StringUtils.isEmpty(state)) {
+//            state = UuidUtils.getUUID();
+//        }
+//        // 缓存state
+//        authStateCache.cache(state, state);
+//        return state;
+//    }
     /**
      * 获取state，如果为空， 则默认取当前日期的时间戳
-     *
+     * 改造 TODO
      * @param state 原始的state
      * @return 返回不为null的state
      */
     protected String getRealState(String state) {
+        String cacheKey = UuidUtils.getUUID();
         if (StringUtils.isEmpty(state)) {
-            state = UuidUtils.getUUID();
+            state = cacheKey;
         }
         // 缓存state
-        authStateCache.cache(state, state);
-        return state;
+        authStateCache.cache(cacheKey, state);
+        return cacheKey;
     }
-
     /**
      * 通用的 authorizationCode 协议
      *
